@@ -11,3 +11,5 @@ docs-minimind-v/
 .pytest_cache/
 checkpoints/
 results/
+model/siglip2-base-p32-256-ve/
+runs/

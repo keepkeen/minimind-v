@@ -143,6 +143,15 @@ class MiniMindVLM(MiniMindForCausalLM):
         Cache only in eval mode and invalidate after changing weights or budget.
         Padded images and text-only dummy images can be masked out before ViT.
         """
+        features, image_mask = self.encode_image_features(pixel_values, image_mask)
+        return self.project_image_features(features, image_mask)
+
+    def encode_image_features(self, pixel_values, image_mask=None):
+        """Frozen pre-projector features [B,N,64,Dv] for shared teacher/student use.
+
+        Unlike projected embeddings, these remain valid while the projector trains.
+        The encoder, input pixels and preprocessing must remain identical.
+        """
         if hasattr(pixel_values, 'keys'):
             image_mask = pixel_values.get('image_mask', image_mask)
             pixels = pixel_values['pixel_values']
@@ -161,10 +170,28 @@ class MiniMindVLM(MiniMindForCausalLM):
         if image_mask.shape != (batch, images):
             raise ValueError('image_mask shape does not match pixel_values')
         parameter = next(self.vision_proj.parameters())
-        result = parameter.new_zeros(batch, images, self.config.image_token_len, self.config.hidden_size)
+        result = parameter.new_zeros(batch, images, 64, self.config.image_hidden_size)
         if image_mask.any():
             features = self.get_image_embeddings(pixels[image_mask], self.vision_encoder)
-            projected = self.vision_proj(features.to(device=parameter.device, dtype=parameter.dtype))
+            if features.shape[-2:] != (64, self.config.image_hidden_size):
+                raise ValueError('BudgetLab requires the configured 64-patch vision encoder')
+            result = result.to(device=features.device, dtype=features.dtype)
+            result[image_mask.to(result.device)] = features
+        return result, image_mask.to(result.device)
+
+    def project_image_features(self, features, image_mask=None):
+        """Project only real images; keep this operation inside forward for DDP."""
+        if features.ndim != 4 or features.shape[-2:] != (64, self.config.image_hidden_size):
+            raise ValueError('vision_features must be [B,N,64,image_hidden_size]')
+        if image_mask is None:
+            image_mask = torch.ones(features.shape[:2], dtype=torch.bool, device=features.device)
+        image_mask = image_mask.to(device=features.device, dtype=torch.bool)
+        if image_mask.shape != features.shape[:2]:
+            raise ValueError('image_mask shape does not match vision_features')
+        parameter = next(self.vision_proj.parameters())
+        result = parameter.new_zeros(*features.shape[:2], self.config.image_token_len, self.config.hidden_size)
+        if image_mask.any():
+            projected = self.vision_proj(features[image_mask].to(device=parameter.device, dtype=parameter.dtype))
             result = result.to(projected.dtype)
             result[image_mask.to(result.device)] = projected
         return result
@@ -184,6 +211,7 @@ class MiniMindVLM(MiniMindForCausalLM):
                 labels: Optional[torch.Tensor] = None,
                 pixel_values: Optional[torch.FloatTensor] = None,
                 image_embeddings: Optional[torch.Tensor] = None,
+                vision_features: Optional[torch.Tensor] = None,
                 image_mask: Optional[torch.Tensor] = None,
                 **args):
         batch_size, seq_length = input_ids.shape
@@ -194,8 +222,10 @@ class MiniMindVLM(MiniMindForCausalLM):
         hidden_states = self.model.dropout(self.model.embed_tokens(input_ids))
 
         if start_pos == 0:
-            if pixel_values is not None and image_embeddings is not None:
-                raise ValueError('Pass pixel_values or cached image_embeddings, not both')
+            if sum(value is not None for value in (pixel_values, image_embeddings, vision_features)) > 1:
+                raise ValueError('Pass only one of pixel_values, image_embeddings, vision_features')
+            if vision_features is not None:
+                image_embeddings = self.project_image_features(vision_features, image_mask)
             if pixel_values is not None:
                 if hasattr(pixel_values, 'keys'):
                     image_mask = pixel_values.get('image_mask', image_mask)
@@ -252,7 +282,7 @@ class MiniMindVLM(MiniMindForCausalLM):
                 kwargs['pixel_values'] = {k: v.repeat(num_return_sequences, *([1] * (v.ndim - 1))) for k, v in pv.items()}
             else:
                 kwargs['pixel_values'] = pv.repeat(num_return_sequences, *([1] * (pv.ndim - 1)))
-        for key in ('image_embeddings', 'image_mask'):
+        for key in ('image_embeddings', 'vision_features', 'image_mask'):
             if num_return_sequences > 1 and kwargs.get(key) is not None:
                 value = kwargs[key]
                 kwargs[key] = value.repeat(num_return_sequences, *([1] * (value.ndim - 1)))

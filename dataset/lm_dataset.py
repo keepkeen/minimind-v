@@ -46,11 +46,12 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2):
 
 
 class VLMDataset(Dataset):
-    def __init__(self, parquet_path, tokenizer, preprocess=None, max_length=512, image_special_token='<|image_pad|>', image_token_len=64):
+    def __init__(self, parquet_path, tokenizer, preprocess=None, max_length=512, image_special_token='<|image_pad|>', image_token_len=64, pad_to_max_length=True):
         super().__init__()
         self.dataset = HFDataset.from_parquet(parquet_path)
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.pad_to_max_length = pad_to_max_length
         self.preprocess = preprocess
         self.image_special_token = image_special_token * image_token_len
         self.image_token_len = image_token_len
@@ -116,7 +117,7 @@ class VLMDataset(Dataset):
         labels = self.generate_labels(input_ids)
         if not any(label != -100 for label in labels[1:]):
             raise ValueError(f'Sample {index}: no supervised answer remains after truncation')
-        padding = self.max_length - len(input_ids)
+        padding = self.max_length - len(input_ids) if self.pad_to_max_length else 0
         input_ids += [self.tokenizer.pad_token_id] * padding
         labels += [-100] * padding
 

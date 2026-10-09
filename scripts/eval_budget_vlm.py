@@ -58,6 +58,8 @@ def read_manifest(path):
             ids.add(row['id'])
             if not isinstance(row.get('question'), str):
                 raise ValueError(f'Line {line_number}: question must be a string')
+            if 'group_id' in row and (not isinstance(row['group_id'], str) or not row['group_id']):
+                raise ValueError(f'Line {line_number}: group_id must be a nonempty string')
             score_answer('', row.get('answers', []))
             paths = row.get('images', [row['image']] if 'image' in row else [])
             if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
@@ -128,6 +130,8 @@ def evaluate_one(row, image_paths, model, tokenizer, processor, args):
     tokens = generated.numel()  # Includes EOS if generated.
     result = {
         'id': row['id'], 'category': row.get('category', 'unspecified'),
+        'question': row['question'], 'source_images': row['images'],
+        'group_id': row.get('group_id', json.dumps(row['images'], ensure_ascii=False)),
         'prediction': prediction, 'answers': row['answers'], 'image_condition': args.image_condition,
         'image_paths_used': image_paths, 'images': len(image_paths),
         'image_tokens': len(image_paths) * model.config.image_token_len,
@@ -148,6 +152,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--load_from', default='model')
     parser.add_argument('--save_dir', default='out')
+    parser.add_argument('--vision_model_path', default='./model/siglip2-base-p32-256-ve')
     parser.add_argument('--weight', default='sft_vlm')
     parser.add_argument('--hidden_size', type=int, default=768)
     parser.add_argument('--num_hidden_layers', type=int, default=8)
