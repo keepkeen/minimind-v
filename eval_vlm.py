@@ -12,18 +12,25 @@ warnings.filterwarnings('ignore')
 
 def init_model(args):
     tokenizer = AutoTokenizer.from_pretrained(args.load_from, trust_remote_code=True)
-    if 'model' in args.load_from:
+    if args.load_from == 'model':
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
         model = MiniMindVLM(
-            VLMConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe)),
+            VLMConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe), image_token_len=getattr(args, 'image_token_len', 64)),
             vision_model_path="./model/siglip2-base-p32-256-ve"
         )
         state_dict = torch.load(ckp, map_location=args.device)
-        model.load_state_dict({k: v for k, v in state_dict.items() if 'mask' not in k}, strict=False)
+        incompatible = model.load_state_dict({k: v for k, v in state_dict.items() if 'mask' not in k}, strict=False)
+        missing = [key for key in incompatible.missing_keys if not key.startswith('vision_encoder.')]
+        if missing or incompatible.unexpected_keys:
+            raise ValueError(f'Incompatible VLM checkpoint: missing={missing}, unexpected={incompatible.unexpected_keys}')
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
         model.vision_encoder, model.processor = MiniMindVLM.get_vision_model("./model/siglip2-base-p32-256-ve")
+        if model.config.image_token_len != getattr(args, 'image_token_len', 64):
+            raise ValueError('Requested image_token_len differs from the exported model config')
+    if model.vision_encoder is None or model.processor is None:
+        raise RuntimeError('Missing SigLIP2 encoder; download model/siglip2-base-p32-256-ve first')
     get_model_params(model, model.config)
     model = model.eval()
     if "cuda" in args.device: model = model.half()
@@ -37,6 +44,7 @@ def main():
     parser.add_argument('--weight', default='sft_vlm', type=str, help="权重名称前缀（pretrain_vlm, sft_vlm）")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
+    parser.add_argument('--image_token_len', default=64, type=int, choices=[4, 16, 64], help="视觉token预算，须与训练/评估配置一致")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
     parser.add_argument('--temperature', default=0.7, type=float, help="生成温度，控制随机性（0-1，越大越随机）")

@@ -1,3 +1,20 @@
+## BudgetLab fork：受限算力下的可验证视觉问答
+
+本分支基于 MiniMind-3V，上游基线 `1862b633fc082a723e78dbead9777545f09d960c`。保留下方上游介绍与署名。
+
+新增 64/16/4 视觉 token 预算、严格多图融合、纯文本/变长多图混合批次、视觉特征缓存接口及确定性 QA 评测。默认 64 档兼容原 projector 权重；压缩档是空间平均池化基线，不宣称算法新颖性或无损加速。
+
+阅读：[源码与面试手册](docs/INTERVIEW_GUIDE_ZH.md) · [实验与运行手册](docs/EXPERIMENT_PLAN.md) · [2026-10 研究与业界进展](docs/RESEARCH_2026_10.md) · [验证记录与限制](docs/VALIDATION.md)。
+
+当前交付为代码与测试。**尚未完成真实任务训练、准确率和 CUDA 性能对比；不要把测试通过写成模型效果提升。**
+
+```bash
+python -m pytest -q tests
+python scripts/eval_budget_vlm.py --help
+```
+
+---
+
 <div align="center">
 
 ![logo](./images/logo.png)
