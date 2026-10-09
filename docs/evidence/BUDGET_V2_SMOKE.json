@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-09",
+  "scope": "Integration evidence only; two upstream demo images and teacher-generated prefixes, not held-out accuracy or performance benchmark. One real optimizer update; smoke weights are not published.",
+  "implementation_base": "4b4201177cb8e7bb2facc44ef1891a7639ab7aa4",
+  "implementation_state": "V2 working tree before commit; reproduction scripts are committed alongside this report",
+  "source_revisions": {
+    "jingyaogong/minimind-3v-pytorch": "83ae67a06ec29dc1acf2294d8edacbdef12f4013",
+    "jingyaogong/siglip2-base-p32-256-ve": "9465d1dc89db6bc6227c5b6b0e0ca9b940325d62"
+  },
+  "probe": {
+    "scope": "Real upstream weights, two public demo images, generation prefixes. No independent labels, no benchmark score, no measured deployment speedup.",
+    "python": "3.12.13",
+    "torch": "2.6.0",
+    "transformers": "4.57.6",
+    "device": "cpu",
+    "max_new_tokens": 24,
+    "full_parameters": 159647232,
+    "vision_parameters": 94552320,
+    "predictions": [
+      {
+        "image": "dataset/eval_images/image-01-golden-dog-balloons.jpg",
+        "budget": 64,
+        "response_prefix": "这张图片中的主要物体是一只金毛寻回犬，它被描绘成一只充满活",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      },
+      {
+        "image": "dataset/eval_images/image-01-golden-dog-balloons.jpg",
+        "budget": 16,
+        "response_prefix": "这张图中的主要物体是狗，它是一种常见的宠物，以其独特的外观和可爱的",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      },
+      {
+        "image": "dataset/eval_images/image-01-golden-dog-balloons.jpg",
+        "budget": 4,
+        "response_prefix": "这张图中的主要物体是飞机，具体来说是飞机的主体。飞机的主体",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      },
+      {
+        "image": "dataset/eval_images/image-02-rainbow-umbrella-street.jpg",
+        "budget": 64,
+        "response_prefix": "这张图片中的主要物体是雨伞，它是雨伞的中心焦点。雨伞",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      },
+      {
+        "image": "dataset/eval_images/image-02-rainbow-umbrella-street.jpg",
+        "budget": 16,
+        "response_prefix": "这张图中的主要物体是雨伞，它是雨伞的象征。雨伞通常由",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      },
+      {
+        "image": "dataset/eval_images/image-02-rainbow-umbrella-street.jpg",
+        "budget": 4,
+        "response_prefix": "这张图中的主要物体是雨伞，它是雨伞的象征。雨伞通常由",
+        "tokens_including_eos": 24,
+        "stopped_at_eos": false,
+        "finite_logits": true
+      }
+    ]
+  },
+  "one_update_training": {
+    "ce": 1.281687802281873,
+    "kd": 0.5358335889618973,
+    "aux": 0.0,
+    "loss": 1.8175213912437702,
+    "supervised_tokens": 58,
+    "teacher_next_token_accuracy": 0.9482758620689655,
+    "update": 1,
+    "epoch": 0,
+    "lr": 5e-06,
+    "elapsed_ms": 1416.8909590225667,
+    "student_padded_positions": 158,
+    "source_padded_positions": 254,
+    "microbatches": 2
+  },
+  "roundtrip": {
+    "loaded_budget": 16,
+    "finite_logits": true,
+    "projector_max_abs_update": 5.036592483520508e-06
+  },
+  "gradient_reproduction": {
+    "old_mean_of_microbatch_means": [
+      0.12245935201644897,
+      -0.12245933711528778
+    ],
+    "full_valid_token_mean": [
+      0.372459352016449,
+      -0.3724592924118042
+    ],
+    "max_abs_error": 0.25
+  }
+}

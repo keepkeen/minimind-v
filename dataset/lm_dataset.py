@@ -46,13 +46,19 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2):
 
 
 class VLMDataset(Dataset):
-    def __init__(self, parquet_path, tokenizer, preprocess=None, max_length=512, image_special_token='<|image_pad|>', image_token_len=64):
+    def __init__(self, parquet_path, tokenizer, preprocess=None, max_length=512, image_special_token='<|image_pad|>', image_token_len=64, pad_to_max_length=True):
         super().__init__()
         self.dataset = HFDataset.from_parquet(parquet_path)
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.pad_to_max_length = pad_to_max_length
         self.preprocess = preprocess
         self.image_special_token = image_special_token * image_token_len
+        self.image_token_len = image_token_len
+        marker_ids = tokenizer(image_special_token, add_special_tokens=False).input_ids
+        if len(marker_ids) != 1:
+            raise ValueError('The image marker must be one tokenizer special token')
+        self.image_id = marker_ids[0]
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant\n', add_special_tokens=False).input_ids
         self.eos_id = tokenizer(f'{tokenizer.eos_token}\n', add_special_tokens=False).input_ids
 
@@ -83,7 +89,7 @@ class VLMDataset(Dataset):
                     if input_ids[end:end + len(self.eos_id)] == self.eos_id:
                         break
                     end += 1
-                for j in range(start, min(end + len(self.eos_id), self.max_length)):
+                for j in range(start, min(end + len(self.eos_id), len(input_ids))):
                     labels[j] = input_ids[j]
                 i = end + len(self.eos_id) if end < len(input_ids) else len(input_ids)
             else:
@@ -93,21 +99,37 @@ class VLMDataset(Dataset):
     def __getitem__(self, index: int):
         row = self.dataset[index]
         conversations = json.loads(row['conversations']) if isinstance(row['conversations'], str) else row['conversations']
-        image_bytes = row['image_bytes']
+        image_bytes = row.get('image_bytes')
+        if image_bytes is None: image_bytes = []
         if not isinstance(image_bytes, list): image_bytes = [image_bytes]
+        image_count = sum(turn['content'].count('<image>') for turn in conversations if turn['role'] != 'system')
+        if image_count and image_count != len(image_bytes):
+            raise ValueError(f'Sample {index}: {image_count} images in prompt but {len(image_bytes)} images stored')
+        if not image_count:
+            image_bytes = []  # Upstream text-only rows contain a dummy black image.
         
         conversations = pre_processing_chat(conversations)
         prompt = self.create_chat_prompt(conversations)
         prompt = post_processing_chat(prompt)
-        input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
-        input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
+        input_ids = self.tokenizer(prompt, add_special_tokens=False).input_ids[:self.max_length]
+        if input_ids.count(self.image_id) != image_count * self.image_token_len:
+            raise ValueError(f'Sample {index}: image markers were truncated or incorrectly tokenized')
         labels = self.generate_labels(input_ids)
+        if not any(label != -100 for label in labels[1:]):
+            raise ValueError(f'Sample {index}: no supervised answer remains after truncation')
+        padding = self.max_length - len(input_ids) if self.pad_to_max_length else 0
+        input_ids += [self.tokenizer.pad_token_id] * padding
+        labels += [-100] * padding
 
         image_inputs_list = [MiniMindVLM.image2tensor(Image.open(io.BytesIO(img)), self.preprocess) for img in image_bytes]
-        if hasattr(image_inputs_list[0], 'keys'):
+        if not image_inputs_list:
+            size = self.preprocess.size
+            image_data = {'pixel_values': torch.empty(0, 3, size['height'], size['width'])}
+        elif hasattr(image_inputs_list[0], 'keys'):
             image_data = {k: torch.cat([inp[k] for inp in image_inputs_list], dim=0) for k in image_inputs_list[0].keys()}
         else:
-            image_data = torch.stack(image_inputs_list)
+            image_data = {'pixel_values': torch.stack(image_inputs_list)}
+        image_data['image_mask'] = torch.ones(len(image_bytes), dtype=torch.bool)
         # # === 调试打印 ===
         # print(f"\n--- Sample {index} ---")
         # for i, (x, y) in enumerate(zip(input_ids[:-1], labels[1:])):

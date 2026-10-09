@@ -17,6 +17,9 @@ from model.model_vlm import MiniMindVLM
 
 
 def get_model_params(model, config, ignore_patterns=['vision_encoder']):
+    all_params = sum(p.numel() for p in model.parameters()) / 1e6
+    vision_params = sum(p.numel() for n, p in model.named_parameters() if n.startswith('vision_encoder.')) / 1e6
+    Logger(f'Full inference params: {all_params:.2f}M (vision encoder: {vision_params:.2f}M)')
     def should_count(n): return not any(p in n for p in ignore_patterns)
     total = sum(p.numel() for n, p in model.named_parameters() if should_count(n)) / 1e6
     n_routed = getattr(config, 'n_routed_experts', getattr(config, 'num_experts', 0))
@@ -66,6 +69,8 @@ def setup_seed(seed: int):
 def init_vlm_model(vlm_config, from_weight='pretrain_vlm', tokenizer_path='../model', vision_model_path='../model/siglip2-base-p32-256-ve', save_dir='../out', device='cuda', freeze_llm=0):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindVLM(vlm_config, vision_model_path=vision_model_path)
+    if model.vision_encoder is None or model.processor is None:
+        raise RuntimeError(f'Cannot load the frozen vision encoder at {vision_model_path}')
     
     if from_weight != 'none':
         moe_suffix = '_moe' if vlm_config.use_moe else ''
@@ -129,6 +134,7 @@ def vlm_checkpoint(vlm_config, weight='pretrain_vlm', model=None, optimizer=None
             'world_size': dist.get_world_size() if dist.is_initialized() else 1,
             'wandb_id': wandb_id
         }
+        resume_data['image_token_len'] = vlm_config.image_token_len
         for key, value in kwargs.items():
             if value is not None:
                 if hasattr(value, 'state_dict'):
@@ -146,6 +152,8 @@ def vlm_checkpoint(vlm_config, weight='pretrain_vlm', model=None, optimizer=None
     else:  # 加载模式
         if os.path.exists(resume_path):
             ckp_data = torch.load(resume_path, map_location='cpu')
+            if ckp_data.get('image_token_len', 64) != vlm_config.image_token_len:
+                raise ValueError('Resume checkpoint has a different image_token_len; use a separate save_weight')
             saved_ws = ckp_data.get('world_size', 1)
             current_ws = dist.get_world_size() if dist.is_initialized() else 1
             if saved_ws != current_ws:
@@ -160,7 +168,15 @@ def vlm_collate_fn(batch):
     labels = torch.stack([b[1] for b in batch])
     pixel_data = [b[2] for b in batch]
     if hasattr(pixel_data[0], 'keys'):
-        pixel_values = {k: torch.stack([d[k] for d in pixel_data]) for k in pixel_data[0].keys()}
+        max_images = max(d['pixel_values'].shape[0] for d in pixel_data)
+        pixel_values = {}
+        for key in pixel_data[0]:
+            values = []
+            for sample in pixel_data:
+                value = sample[key]
+                padding = value.new_zeros((max_images - value.shape[0], *value.shape[1:]))
+                values.append(torch.cat((value, padding), dim=0))
+            pixel_values[key] = torch.stack(values)
     else:
         pixel_values = torch.stack(pixel_data)
     return input_ids, labels, pixel_values
